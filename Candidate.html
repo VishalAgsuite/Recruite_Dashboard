@@ -567,13 +567,11 @@ MODAL
 </div>
 
 <script>
-    function openCandidatePage(){
+    window.openCandidatePage = function() {
+        window.location.href = "JobOpening.html";
+    }
 
-    window.location.href = "JobOpeing.html";
-
-}
-
-const API_URL = "http://localhost:3000";
+const API_URL = window.location.origin;
 
 let candidates = [];
 

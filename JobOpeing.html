@@ -124,14 +124,23 @@
         .status-pill { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 700; letter-spacing: 0.25px; text-transform: uppercase; background: #f1f5f9; color: #475569; border: 1px solid transparent; white-space: nowrap; }
         
         .state-msg { text-align: center; padding: 50px; color: #94a3b8; font-size: 15px; font-weight: 500; }
-        
+        .data-status-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+        .loading-status { display: inline-flex; align-items: center; justify-content: center; padding: 10px 16px; border-radius: 999px; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
+        .loading-spinner { width: 16px; height: 16px; border: 2px solid rgba(59, 130, 246, 0.25); border-top-color: #1d4ed8; border-radius: 50%; animation: spin 0.9s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body>
 
     <div class="header-container">
-        <h1>Recruiter Workspace Performance Matrix</h1>
+        <div>
+            <h1>Recruiter Workspace Performance Matrix</h1>
+            <div class="data-status-row">
+                <div class="loading-spinner" id="zohoLoadingSpinner"></div>
+                <span class="loading-status" id="zohoLoadingStatus">Zoho data loading: 0%</span>
+            </div>
+        </div>
         
         <div class="controls-container">
             <div class="filter-wrapper">
@@ -200,7 +209,7 @@
                             </tr>
                         </thead>
                         <tbody id="reportTableBody">
-                            <tr><td colspan="6" class="state-msg">Fetching records from Zoho integration node...</td></tr>
+                            <tr><td colspan="6" class="state-msg">Loading Zoho data... 0%</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -238,11 +247,9 @@
     </div>
 
 <script>
-    function openCandidatePage(){
-
-    window.location.href = "Candidate.html";
-
-}
+    window.openCandidatePage = function() {
+        window.location.href = "Candidate.html";
+    }
 let runtimeCachedReport = [];
 let cachedJobsList = []; 
 let moduleStorage = { JobOpenings: [], Interviews: [], Calls: [], Offers: [] };
@@ -275,14 +282,39 @@ function formatCurrencyString(numericValue, symbol = "₹") {
     return symbol + parseFloat(numericValue).toLocaleString('en-IN', { maximumFractionDigits: 2 });
 }
 
+function updateZohoLoadingStatus(completed, total, status = 'Zoho data loading') {
+    const statusEl = document.getElementById('zohoLoadingStatus');
+    if (!statusEl) return;
+    const percent = Math.min(100, Math.round((completed / total) * 100));
+    statusEl.innerText = `${status}: ${percent}%`;
+}
+
+function setZohoLoadingMessage(message) {
+    const statusEl = document.getElementById('zohoLoadingStatus');
+    if (!statusEl) return;
+    statusEl.innerText = message;
+}
+
 async function initDashboardPipeline() {
     try {
-        const [jobsRes, interviewsRes, callsRes, offersRes] = await Promise.all([
-            fetch(`${API_ROOT_ENDPOINT}/module/JobOpenings`).then(r => r.json()),
-            fetch(`${API_ROOT_ENDPOINT}/module/Interviews`).then(r => r.json()),
-            fetch(`${API_ROOT_ENDPOINT}/module/Calls`).then(r => r.json()),
-            fetch(`${API_ROOT_ENDPOINT}/module/Offers`).then(r => r.json())
-        ]);
+        const modules = ['JobOpenings', 'Interviews', 'Calls', 'Offers'];
+        let completedCount = 0;
+        updateZohoLoadingStatus(completedCount, modules.length);
+        document.getElementById('reportTableBody').innerHTML = `
+            <tr><td colspan="6" class="state-msg">Loading Zoho data... 0%</td></tr>`;
+
+        const results = await Promise.all(modules.map(async moduleName => {
+            const response = await fetch(`${API_ROOT_ENDPOINT}/module/${moduleName}`);
+            const json = await response.json();
+            completedCount += 1;
+            const percent = Math.min(100, Math.round((completedCount / modules.length) * 100));
+            updateZohoLoadingStatus(completedCount, modules.length);
+            document.getElementById('reportTableBody').innerHTML = `
+                <tr><td colspan="6" class="state-msg">Loading Zoho data... ${percent}%</td></tr>`;
+            return json;
+        }));
+
+        const [jobsRes, interviewsRes, callsRes, offersRes] = results;
 
         moduleStorage.JobOpenings = jobsRes.data || [];
         moduleStorage.Interviews = interviewsRes.data || [];
@@ -292,14 +324,18 @@ async function initDashboardPipeline() {
 
         buildRecruiterListFromData();
         applyUIRefresh();
+        setZohoLoadingMessage('Zoho data loaded: 100%');
     } catch (err) {
-        document.getElementById("reportTableBody").innerHTML = `
+        setZohoLoadingMessage('Zoho load failed');
+        document.getElementById('reportTableBody').innerHTML = `
             <tr><td colspan="6" style="color: #ef4444; font-weight: 600;" class="state-msg">
                 Failed to contact server API. Confirm backend node is active at port 3000.
             </td></tr>`;
         console.error("Pipeline Sync Error:", err);
     }
 }
+
+window.addEventListener('DOMContentLoaded', initDashboardPipeline);
 
 function buildRecruiterListFromData() {
     const uniqueRecruiters = new Set();
