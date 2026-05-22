@@ -156,16 +156,7 @@ app.get("/module/:moduleName", async (req, res) => {
 });
 
 /* =====================================
-   PORT
+   EXPORT FOR SERVERLESS (Vercel)
 ===================================== */
 
-const PORT =
-process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-
-    console.log(
-        `Server Running On Port ${PORT}`
-    );
-
-});
+module.exports = app;
