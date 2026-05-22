@@ -81,6 +81,11 @@ async function getAccessToken() {
     const result =
     await response.json();
 
+    if (!result.access_token) {
+        const errorMessage = result.error_description || result.error || JSON.stringify(result);
+        throw new Error(`Zoho auth failed: ${errorMessage}`);
+    }
+
     return result.access_token;
 }
 
@@ -117,21 +122,39 @@ app.get("/module/:moduleName", async (req, res) => {
 
             });
 
-            const result =
-            await response.json();
+            const rawBody = await response.text();
 
-            if (result.data) {
+            if (!rawBody || !rawBody.trim()) {
+                console.log(`Page ${page}: empty response, stopping fetch loop.`);
+                break;
+            }
 
-                allData =
-                [...allData, ...result.data];
+            let result;
+            try {
+                result = JSON.parse(rawBody);
+            } catch (parseError) {
+                throw new Error(`Zoho invalid JSON response: ${rawBody.slice(0, 200)}`);
+            }
 
-                console.log(
-                    `Page ${page}:`,
-                    result.data.length
-                );
+            if (!response.ok) {
+                const errorMessage = result.error_description || result.error || result.message || response.status;
+                throw new Error(`Zoho API call failed: ${errorMessage}`);
+            }
 
-            } else {
+            if (!result.data) {
+                const errorMessage = result.code || result.error || JSON.stringify(result);
+                throw new Error(`Zoho API error: ${errorMessage}`);
+            }
 
+            allData =
+            [...allData, ...result.data];
+
+            console.log(
+                `Page ${page}:`,
+                result.data.length
+            );
+
+            if (result.data.length === 0) {
                 break;
             }
         }
