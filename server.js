@@ -47,46 +47,84 @@ process.env.REFRESH_TOKEN;
    ACCESS TOKEN
 ===================================== */
 
-async function getAccessToken() {
+let cachedAccessToken = null;
+let accessTokenExpiry = 0;
+let accessTokenPromise = null;
+let zohoRequestQueue = Promise.resolve();
+let lastZohoAuthFailure = 0;
+const ZOHO_AUTH_COOLDOWN_MS = 60_000;
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function createZohoAccessToken() {
+    const now = Date.now();
+    if (now - lastZohoAuthFailure < ZOHO_AUTH_COOLDOWN_MS) {
+        throw new Error('Zoho auth rate limit active. Please wait a moment and retry.');
+    }
 
     const response = await fetch(
         "https://accounts.zoho.in/oauth/v2/token",
         {
             method: "POST",
-
             headers: {
-                "Content-Type":
-                "application/x-www-form-urlencoded"
+                "Content-Type": "application/x-www-form-urlencoded"
             },
-
             body: new URLSearchParams({
-
-                refresh_token:
-                REFRESH_TOKEN,
-
-                client_id:
-                CLIENT_ID,
-
-                client_secret:
-                CLIENT_SECRET,
-
-                grant_type:
-                "refresh_token"
-
+                refresh_token: REFRESH_TOKEN,
+                client_id: CLIENT_ID,
+                client_secret: CLIENT_SECRET,
+                grant_type: "refresh_token"
             })
-
         }
     );
 
-    const result =
-    await response.json();
+    const result = await response.json();
 
     if (!result.access_token) {
-        const errorMessage = result.error_description || result.error || JSON.stringify(result);
+        lastZohoAuthFailure = Date.now();
+        const errorMessage = result.error_description || result.error || result.message || JSON.stringify(result);
         throw new Error(`Zoho auth failed: ${errorMessage}`);
     }
 
-    return result.access_token;
+    const expiresIn = Number(result.expires_in || 3600);
+    cachedAccessToken = result.access_token;
+    accessTokenExpiry = Date.now() + (expiresIn * 1000);
+    return cachedAccessToken;
+}
+
+async function getAccessToken() {
+    const now = Date.now();
+    if (cachedAccessToken && accessTokenExpiry > now + 30_000) {
+        return cachedAccessToken;
+    }
+
+    if (accessTokenPromise) {
+        return accessTokenPromise;
+    }
+
+    accessTokenPromise = createZohoAccessToken()
+        .catch(err => {
+            accessTokenPromise = null;
+            throw err;
+        })
+        .then(token => {
+            accessTokenPromise = null;
+            return token;
+        });
+
+    return accessTokenPromise;
+}
+
+function queueZohoRequest(fn) {
+    const queued = zohoRequestQueue.then(() => fn()).catch(err => {
+        // Keep the queue flowing even if one request fails
+        return Promise.reject(err);
+    });
+
+    zohoRequestQueue = queued.catch(() => {});
+    return queued;
 }
 
 /* =====================================
@@ -100,27 +138,57 @@ app.get("/module/:moduleName", async (req, res) => {
         const moduleName =
         req.params.moduleName;
 
-        const accessToken =
-        await getAccessToken();
+        const allData = await queueZohoRequest(async () => {
+            const accessToken = await getAccessToken();
+            let pageData = [];
 
-        let allData = [];
+            for (let page = 1; page <= 10; page++) {
+                const url = `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
+                console.log("Fetching:", url);
 
-        for (let page = 1; page <= 10; page++) {
+                const response = await fetch(url, {
+                    headers: {
+                        Authorization: `Zoho-oauthtoken ${accessToken}`
+                    }
+                });
 
-            const url =
-            `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
+                const rawBody = await response.text();
 
-            console.log("Fetching:", url);
-
-            const response =
-            await fetch(url, {
-
-                headers: {
-                    Authorization:
-                    `Zoho-oauthtoken ${accessToken}`
+                if (!rawBody || !rawBody.trim()) {
+                    console.log(`Page ${page}: empty response, stopping fetch loop.`);
+                    break;
                 }
 
-            });
+                let result;
+                try {
+                    result = JSON.parse(rawBody);
+                } catch (parseError) {
+                    throw new Error(`Zoho invalid JSON response: ${rawBody.slice(0, 200)}`);
+                }
+
+                if (!response.ok) {
+                    const errorMessage = result.error_description || result.error || result.message || response.status;
+                    throw new Error(`Zoho API call failed: ${errorMessage}`);
+                }
+
+                if (!result.data) {
+                    const errorMessage = result.code || result.error || JSON.stringify(result);
+                    throw new Error(`Zoho API error: ${errorMessage}`);
+                }
+
+                pageData = [...pageData, ...result.data];
+
+                console.log(`Page ${page}:`, result.data.length);
+
+                if (result.data.length === 0 || result.data.length < 200) {
+                    break;
+                }
+
+                await sleep(250);
+            }
+
+            return pageData;
+        });
 
             const rawBody = await response.text();
 
