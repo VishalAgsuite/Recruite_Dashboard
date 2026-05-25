@@ -127,123 +127,109 @@ function queueZohoRequest(fn) {
     return queued;
 }
 
+async function fetchZohoModuleData(moduleName, accessToken) {
+    let allData = [];
+
+    for (let page = 1; page <= 10; page++) {
+        const url = `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
+        console.log("Fetching:", url);
+
+        const response = await fetch(url, {
+            headers: {
+                Authorization: `Zoho-oauthtoken ${accessToken}`
+            }
+        });
+
+        const rawBody = await response.text();
+
+        if (!rawBody || !rawBody.trim()) {
+            console.log(`Page ${page}: empty response, stopping fetch loop.`);
+            break;
+        }
+
+        let result;
+        try {
+            result = JSON.parse(rawBody);
+        } catch (parseError) {
+            throw new Error(`Zoho invalid JSON response: ${rawBody.slice(0, 200)}`);
+        }
+
+        if (!response.ok) {
+            const errorMessage = result.error_description || result.error || result.message || response.status;
+            throw new Error(`Zoho API call failed: ${errorMessage}`);
+        }
+
+        if (!result.data) {
+            const errorMessage = result.code || result.error || JSON.stringify(result);
+            throw new Error(`Zoho API error: ${errorMessage}`);
+        }
+
+        allData = [...allData, ...result.data];
+        console.log(`Page ${page}:`, result.data.length);
+
+        if (result.data.length === 0 || result.data.length < 200) {
+            break;
+        }
+
+        await sleep(250);
+    }
+
+    return allData;
+}
+
+app.get("/dashboard-data", async (req, res) => {
+    try {
+        const accessToken = await getAccessToken();
+        const modules = ['JobOpenings', 'Interviews', 'Calls', 'Offers'];
+        const data = {};
+
+        for (const moduleName of modules) {
+            data[moduleName] = await fetchZohoModuleData(moduleName, accessToken);
+        }
+
+        res.json({
+            success: true,
+            data,
+            counts: {
+                JobOpenings: data.JobOpenings.length,
+                Interviews: data.Interviews.length,
+                Calls: data.Calls.length,
+                Offers: data.Offers.length
+            }
+        });
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 /* =====================================
    FETCH MODULE DATA
 ===================================== */
 
 app.get("/module/:moduleName", async (req, res) => {
-
     try {
-
-        const moduleName =
-        req.params.moduleName;
-
+        const moduleName = req.params.moduleName;
         const allData = await queueZohoRequest(async () => {
             const accessToken = await getAccessToken();
-            let pageData = [];
-
-            for (let page = 1; page <= 10; page++) {
-                const url = `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
-                console.log("Fetching:", url);
-
-                const response = await fetch(url, {
-                    headers: {
-                        Authorization: `Zoho-oauthtoken ${accessToken}`
-                    }
-                });
-
-                const rawBody = await response.text();
-
-                if (!rawBody || !rawBody.trim()) {
-                    console.log(`Page ${page}: empty response, stopping fetch loop.`);
-                    break;
-                }
-
-                let result;
-                try {
-                    result = JSON.parse(rawBody);
-                } catch (parseError) {
-                    throw new Error(`Zoho invalid JSON response: ${rawBody.slice(0, 200)}`);
-                }
-
-                if (!response.ok) {
-                    const errorMessage = result.error_description || result.error || result.message || response.status;
-                    throw new Error(`Zoho API call failed: ${errorMessage}`);
-                }
-
-                if (!result.data) {
-                    const errorMessage = result.code || result.error || JSON.stringify(result);
-                    throw new Error(`Zoho API error: ${errorMessage}`);
-                }
-
-                pageData = [...pageData, ...result.data];
-
-                console.log(`Page ${page}:`, result.data.length);
-
-                if (result.data.length === 0 || result.data.length < 200) {
-                    break;
-                }
-
-                await sleep(250);
-            }
-
-            return pageData;
+            return fetchZohoModuleData(moduleName, accessToken);
         });
-
-            const rawBody = await response.text();
-
-            if (!rawBody || !rawBody.trim()) {
-                console.log(`Page ${page}: empty response, stopping fetch loop.`);
-                break;
-            }
-
-            let result;
-            try {
-                result = JSON.parse(rawBody);
-            } catch (parseError) {
-                throw new Error(`Zoho invalid JSON response: ${rawBody.slice(0, 200)}`);
-            }
-
-            if (!response.ok) {
-                const errorMessage = result.error_description || result.error || result.message || response.status;
-                throw new Error(`Zoho API call failed: ${errorMessage}`);
-            }
-
-            if (!result.data) {
-                const errorMessage = result.code || result.error || JSON.stringify(result);
-                throw new Error(`Zoho API error: ${errorMessage}`);
-            }
-
-            allData =
-            [...allData, ...result.data];
-
-            console.log(
-                `Page ${page}:`,
-                result.data.length
-            );
-
-            if (result.data.length === 0) {
-                break;
-            }
-        }
 
         res.json({
             success: true,
             count: allData.length,
             data: allData
         });
-
     } catch (error) {
-
         console.log(error);
-
         res.status(500).json({
             success: false,
             error: error.message
         });
-
     }
-
 });
 
 /* =====================================
