@@ -37,8 +37,8 @@
   </div>
 
   <script>
-    const API_ROOT = (typeof API_ROOT_ENDPOINT !== 'undefined' && API_ROOT_ENDPOINT) ? API_ROOT_ENDPOINT : window.location.origin || 'http://localhost:3000';
-    document.getElementById('backBtn').href = API_ROOT + '/JobOpening.html';
+    const API_ROOT = '/api';
+    document.getElementById('backBtn').href = window.location.origin + '/JobOpening.html';
 
     async function load() {
       const status = document.getElementById('status');
