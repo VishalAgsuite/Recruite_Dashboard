@@ -6,7 +6,7 @@ require("dotenv").config();
 const app = express();
 
 /* =====================================
-   IMPORTANT FOR RENDER + VERCEL
+   TRUST PROXY
 ===================================== */
 
 app.set("trust proxy", 1);
@@ -16,20 +16,23 @@ app.set("trust proxy", 1);
 ===================================== */
 
 const allowedOrigins = [
+
     "https://recruite-dashboard.vercel.app",
     "http://localhost:3000",
     "http://127.0.0.1:5500"
+
 ];
 
 app.use(cors({
 
     origin: function (origin, callback) {
 
-        // Allow requests with no origin
-        // (Postman, mobile apps, curl)
+        // Allow Postman / Server Requests
 
         if (!origin) {
+
             return callback(null, true);
+
         }
 
         if (allowedOrigins.includes(origin)) {
@@ -38,10 +41,13 @@ app.use(cors({
 
         } else {
 
-            console.log("Blocked By CORS:", origin);
+            console.log(
+                "Blocked By CORS:",
+                origin
+            );
 
             callback(
-                new Error("Not allowed by CORS")
+                new Error("CORS Not Allowed")
             );
 
         }
@@ -66,7 +72,7 @@ app.use(cors({
 }));
 
 /* =====================================
-   HANDLE PREFLIGHT
+   PREFLIGHT
 ===================================== */
 
 app.options("*", cors());
@@ -74,7 +80,7 @@ app.options("*", cors());
 app.use(express.json());
 
 /* =====================================
-   STATIC FRONTEND
+   STATIC FILES
 ===================================== */
 
 app.use(
@@ -84,18 +90,29 @@ app.use(
 );
 
 /* =====================================
-   HOME PAGE
+   HOME
 ===================================== */
 
 app.get("/", (req, res) => {
 
-    res.sendFile(
-        path.join(
-            __dirname,
-            "public",
-            "JobOpening.html"
-        )
-    );
+    res.send("Recruit Dashboard API Running");
+
+});
+
+/* =====================================
+   HEALTH CHECK
+===================================== */
+
+app.get("/health", (req, res) => {
+
+    res.status(200).json({
+
+        success: true,
+
+        message:
+        "Server Running Successfully"
+
+    });
 
 });
 
@@ -113,7 +130,7 @@ const REFRESH_TOKEN =
 process.env.REFRESH_TOKEN;
 
 /* =====================================
-   ACCESS TOKEN CACHE
+   CACHE
 ===================================== */
 
 let cachedAccessToken = null;
@@ -121,10 +138,6 @@ let cachedAccessToken = null;
 let accessTokenExpiry = 0;
 
 let accessTokenPromise = null;
-
-/* =====================================
-   MODULE CACHE
-===================================== */
 
 let zohoModuleCache = {};
 
@@ -150,7 +163,7 @@ function sleep(ms) {
 async function createZohoAccessToken() {
 
     console.log(
-        "Generating Zoho Token..."
+        "Generating Zoho Access Token..."
     );
 
     const response = await fetch(
@@ -160,8 +173,10 @@ async function createZohoAccessToken() {
             method: "POST",
 
             headers: {
+
                 "Content-Type":
                 "application/x-www-form-urlencoded"
+
             },
 
             body: new URLSearchParams({
@@ -187,16 +202,18 @@ async function createZohoAccessToken() {
     await response.json();
 
     console.log(
-        "Zoho Token Result:",
+        "Zoho Token Response:",
         result
     );
 
     if (!result.access_token) {
 
         throw new Error(
+
             result.error_description ||
             result.error ||
-            "Token Generation Failed"
+            "Failed To Generate Token"
+
         );
 
     }
@@ -221,8 +238,10 @@ async function getAccessToken() {
     const now = Date.now();
 
     if (
+
         cachedAccessToken &&
         accessTokenExpiry > now + 30000
+
     ) {
 
         return cachedAccessToken;
@@ -261,9 +280,11 @@ async function getAccessToken() {
 ===================================== */
 
 async function fetchZohoModulePage(
+
     moduleName,
     accessToken,
     page
+
 ) {
 
     const url =
@@ -296,7 +317,7 @@ async function fetchZohoModulePage(
     if (!response.ok) {
 
         console.log(
-            "Zoho Error:",
+            "Zoho API Error:",
             result
         );
 
@@ -319,20 +340,24 @@ async function fetchZohoModulePage(
 ===================================== */
 
 async function fetchZohoModuleData(
+
     moduleName,
     accessToken
+
 ) {
 
     const cache =
     zohoModuleCache[moduleName];
 
     if (
+
         cache &&
         cache.expiry > Date.now()
+
     ) {
 
         console.log(
-            `${moduleName} From Cache`
+            `${moduleName} Loaded From Cache`
         );
 
         return cache.data;
@@ -385,7 +410,7 @@ async function fetchZohoModuleData(
         } catch (error) {
 
             console.log(
-                `Error Page ${page}:`,
+                `Error Fetching ${moduleName} Page ${page}:`,
                 error.message
             );
 
@@ -406,7 +431,7 @@ async function fetchZohoModuleData(
     };
 
     console.log(
-        `${moduleName} Total:`,
+        `${moduleName} Total Records:`,
         allData.length
     );
 
@@ -415,7 +440,7 @@ async function fetchZohoModuleData(
 }
 
 /* =====================================
-   DASHBOARD DATA
+   DASHBOARD DATA API
 ===================================== */
 
 app.get(
@@ -561,27 +586,7 @@ app.get(
 );
 
 /* =====================================
-   HEALTH CHECK
-===================================== */
-
-app.get(
-    "/health",
-    (req, res) => {
-
-        res.status(200).json({
-
-            success: true,
-
-            message:
-            "Server Running Successfully"
-
-        });
-
-    }
-);
-
-/* =====================================
-   ERROR HANDLER
+   GLOBAL ERROR HANDLER
 ===================================== */
 
 app.use((err, req, res, next) => {
@@ -609,10 +614,14 @@ app.use((err, req, res, next) => {
 const PORT =
 process.env.PORT || 3000;
 
-app.listen(PORT, () => {
+app.listen(
+    PORT,
+    "0.0.0.0",
+    () => {
 
-    console.log(
-        `Server Running On Port ${PORT}`
-    );
+        console.log(
+            `Server Running On Port ${PORT}`
+        );
 
-});
+    }
+);
