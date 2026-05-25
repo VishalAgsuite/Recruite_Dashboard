@@ -6,14 +6,70 @@ require("dotenv").config();
 const app = express();
 
 /* =====================================
-   CORS
+   IMPORTANT FOR RENDER + VERCEL
 ===================================== */
 
+app.set("trust proxy", 1);
+
+/* =====================================
+   CORS FIX
+===================================== */
+
+const allowedOrigins = [
+    "https://recruite-dashboard.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:5500"
+];
+
 app.use(cors({
-    origin: "*",
-    methods: ["GET", "POST"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+
+    origin: function (origin, callback) {
+
+        // Allow requests with no origin
+        // (Postman, mobile apps, curl)
+
+        if (!origin) {
+            return callback(null, true);
+        }
+
+        if (allowedOrigins.includes(origin)) {
+
+            callback(null, true);
+
+        } else {
+
+            console.log("Blocked By CORS:", origin);
+
+            callback(
+                new Error("Not allowed by CORS")
+            );
+
+        }
+
+    },
+
+    methods: [
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "OPTIONS"
+    ],
+
+    allowedHeaders: [
+        "Content-Type",
+        "Authorization"
+    ],
+
+    credentials: true
+
 }));
+
+/* =====================================
+   HANDLE PREFLIGHT
+===================================== */
+
+app.options("*", cors());
 
 app.use(express.json());
 
@@ -21,7 +77,11 @@ app.use(express.json());
    STATIC FRONTEND
 ===================================== */
 
-app.use(express.static(path.join(__dirname, "public")));
+app.use(
+    express.static(
+        path.join(__dirname, "public")
+    )
+);
 
 /* =====================================
    HOME PAGE
@@ -43,16 +103,23 @@ app.get("/", (req, res) => {
    ZOHO CONFIG
 ===================================== */
 
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
+const CLIENT_ID =
+process.env.CLIENT_ID;
+
+const CLIENT_SECRET =
+process.env.CLIENT_SECRET;
+
+const REFRESH_TOKEN =
+process.env.REFRESH_TOKEN;
 
 /* =====================================
    ACCESS TOKEN CACHE
 ===================================== */
 
 let cachedAccessToken = null;
+
 let accessTokenExpiry = 0;
+
 let accessTokenPromise = null;
 
 /* =====================================
@@ -60,14 +127,20 @@ let accessTokenPromise = null;
 ===================================== */
 
 let zohoModuleCache = {};
-const MODULE_CACHE_TTL_MS = 2 * 60 * 1000;
+
+const MODULE_CACHE_TTL_MS =
+2 * 60 * 1000;
 
 /* =====================================
    UTIL
 ===================================== */
 
 function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+
+    return new Promise(resolve =>
+        setTimeout(resolve, ms)
+    );
+
 }
 
 /* =====================================
@@ -76,11 +149,14 @@ function sleep(ms) {
 
 async function createZohoAccessToken() {
 
-    console.log("Generating New Zoho Access Token...");
+    console.log(
+        "Generating Zoho Token..."
+    );
 
     const response = await fetch(
         "https://accounts.zoho.in/oauth/v2/token",
         {
+
             method: "POST",
 
             headers: {
@@ -107,21 +183,26 @@ async function createZohoAccessToken() {
         }
     );
 
-    const result = await response.json();
+    const result =
+    await response.json();
 
-    console.log("Zoho Token Response:", result);
+    console.log(
+        "Zoho Token Result:",
+        result
+    );
 
     if (!result.access_token) {
 
         throw new Error(
             result.error_description ||
             result.error ||
-            "Failed to generate token"
+            "Token Generation Failed"
         );
 
     }
 
-    cachedAccessToken = result.access_token;
+    cachedAccessToken =
+    result.access_token;
 
     accessTokenExpiry =
     Date.now() +
@@ -143,11 +224,15 @@ async function getAccessToken() {
         cachedAccessToken &&
         accessTokenExpiry > now + 30000
     ) {
+
         return cachedAccessToken;
+
     }
 
     if (accessTokenPromise) {
+
         return accessTokenPromise;
+
     }
 
     accessTokenPromise =
@@ -184,30 +269,43 @@ async function fetchZohoModulePage(
     const url =
     `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
 
-    console.log("Fetching:", url);
+    console.log(
+        "Fetching:",
+        url
+    );
 
     const response = await fetch(
         url,
         {
+
             method: "GET",
 
             headers: {
+
                 Authorization:
                 `Zoho-oauthtoken ${accessToken}`
+
             }
+
         }
     );
 
-    const result = await response.json();
+    const result =
+    await response.json();
 
     if (!response.ok) {
 
-        console.log(result);
+        console.log(
+            "Zoho Error:",
+            result
+        );
 
         throw new Error(
+
             result.message ||
             result.code ||
             "Zoho API Error"
+
         );
 
     }
@@ -225,7 +323,8 @@ async function fetchZohoModuleData(
     accessToken
 ) {
 
-    const cache = zohoModuleCache[moduleName];
+    const cache =
+    zohoModuleCache[moduleName];
 
     if (
         cache &&
@@ -233,7 +332,7 @@ async function fetchZohoModuleData(
     ) {
 
         console.log(
-            `${moduleName} loaded from cache`
+            `${moduleName} From Cache`
         );
 
         return cache.data;
@@ -242,18 +341,23 @@ async function fetchZohoModuleData(
 
     let allData = [];
 
-    // 13K Candidate Support
     const MAX_PAGES = 70;
 
-    for (let page = 1; page <= MAX_PAGES; page++) {
+    for (
+        let page = 1;
+        page <= MAX_PAGES;
+        page++
+    ) {
 
         try {
 
             const result =
             await fetchZohoModulePage(
+
                 moduleName,
                 accessToken,
                 page
+
             );
 
             const records =
@@ -268,8 +372,12 @@ async function fetchZohoModuleData(
                 ...records
             ];
 
-            if (records.length < 200) {
+            if (
+                records.length < 200
+            ) {
+
                 break;
+
             }
 
             await sleep(200);
@@ -298,7 +406,7 @@ async function fetchZohoModuleData(
     };
 
     console.log(
-        `${moduleName} Total Records:`,
+        `${moduleName} Total:`,
         allData.length
     );
 
@@ -315,6 +423,10 @@ app.get(
     async (req, res) => {
 
         try {
+
+            console.log(
+                "Dashboard API Called"
+            );
 
             const accessToken =
             await getAccessToken();
@@ -341,7 +453,7 @@ app.get(
 
             }
 
-            res.json({
+            res.status(200).json({
 
                 success: true,
 
@@ -370,7 +482,10 @@ app.get(
 
         } catch (error) {
 
-            console.log(error);
+            console.log(
+                "Dashboard Error:",
+                error.message
+            );
 
             res.status(500).json({
 
@@ -399,6 +514,11 @@ app.get(
             const moduleName =
             req.params.moduleName;
 
+            console.log(
+                "Module Request:",
+                moduleName
+            );
+
             const accessToken =
             await getAccessToken();
 
@@ -408,7 +528,7 @@ app.get(
                 accessToken
             );
 
-            res.json({
+            res.status(200).json({
 
                 success: true,
 
@@ -421,7 +541,10 @@ app.get(
 
         } catch (error) {
 
-            console.log(error);
+            console.log(
+                "Module Error:",
+                error.message
+            );
 
             res.status(500).json({
 
@@ -441,40 +564,55 @@ app.get(
    HEALTH CHECK
 ===================================== */
 
-app.get("/health", (req, res) => {
+app.get(
+    "/health",
+    (req, res) => {
 
-    res.json({
+        res.status(200).json({
 
-        success: true,
+            success: true,
 
-        message:
-        "Server Running Successfully"
+            message:
+            "Server Running Successfully"
+
+        });
+
+    }
+);
+
+/* =====================================
+   ERROR HANDLER
+===================================== */
+
+app.use((err, req, res, next) => {
+
+    console.log(
+        "Global Error:",
+        err.message
+    );
+
+    res.status(500).json({
+
+        success: false,
+
+        error:
+        err.message
 
     });
 
 });
 
 /* =====================================
-   LOCAL SERVER
+   START SERVER
 ===================================== */
 
-if (process.env.NODE_ENV !== "production") {
+const PORT =
+process.env.PORT || 3000;
 
-    const PORT =
-    process.env.PORT || 3000;
+app.listen(PORT, () => {
 
-    app.listen(PORT, () => {
+    console.log(
+        `Server Running On Port ${PORT}`
+    );
 
-        console.log(
-            `Server Running On Port ${PORT}`
-        );
-
-    });
-
-}
-
-/* =====================================
-   EXPORT FOR VERCEL
-===================================== */
-
-module.exports = app;
+});
