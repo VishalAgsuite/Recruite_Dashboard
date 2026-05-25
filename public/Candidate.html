@@ -461,6 +461,11 @@ async function loadCandidates() {
             `${API_URL}/module/Candidates`
         );
 
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Server error fetching candidates: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+
         const result =
         await response.json();
 
