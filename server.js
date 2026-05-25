@@ -5,18 +5,23 @@ require("dotenv").config();
 
 const app = express();
 
-app.use(cors());
+/* =====================================
+   CORS
+===================================== */
+
+app.use(cors({
+    origin: "*",
+    methods: ["GET", "POST"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
 app.use(express.json());
 
 /* =====================================
    STATIC FRONTEND
 ===================================== */
 
-app.use(
-    express.static(
-        path.join(__dirname, "public")
-    )
-);
+app.use(express.static(path.join(__dirname, "public")));
 
 /* =====================================
    HOME PAGE
@@ -38,58 +43,31 @@ app.get("/", (req, res) => {
    ZOHO CONFIG
 ===================================== */
 
-const CLIENT_ID =
-process.env.CLIENT_ID;
-
-const CLIENT_SECRET =
-process.env.CLIENT_SECRET;
-
-const REFRESH_TOKEN =
-process.env.REFRESH_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const REFRESH_TOKEN = process.env.REFRESH_TOKEN;
 
 /* =====================================
    ACCESS TOKEN CACHE
 ===================================== */
 
 let cachedAccessToken = null;
-
 let accessTokenExpiry = 0;
-
 let accessTokenPromise = null;
 
 /* =====================================
-   REQUEST CONTROL
-===================================== */
-
-let zohoRequestQueue =
-Promise.resolve();
-
-let lastZohoAuthFailure = 0;
-
-const ZOHO_AUTH_COOLDOWN_MS =
-60_000;
-
-/* =====================================
-   CACHE
+   MODULE CACHE
 ===================================== */
 
 let zohoModuleCache = {};
-
-let pendingModuleFetches = {};
-
-const MODULE_CACHE_TTL_MS =
-2 * 60 * 1000;
+const MODULE_CACHE_TTL_MS = 2 * 60 * 1000;
 
 /* =====================================
-   SLEEP
+   UTIL
 ===================================== */
 
 function sleep(ms) {
-
-    return new Promise(resolve =>
-        setTimeout(resolve, ms)
-    );
-
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /* =====================================
@@ -98,24 +76,7 @@ function sleep(ms) {
 
 async function createZohoAccessToken() {
 
-    const now = Date.now();
-
-    if (
-        now - lastZohoAuthFailure <
-        ZOHO_AUTH_COOLDOWN_MS
-    ) {
-
-        throw new Error(
-            "Zoho auth rate limit active. Please wait."
-        );
-
-    }
-
-    console.log(`
-=====================================
-GENERATING ACCESS TOKEN
-=====================================
-`);
+    console.log("Generating New Zoho Access Token...");
 
     const response = await fetch(
         "https://accounts.zoho.in/oauth/v2/token",
@@ -146,42 +107,25 @@ GENERATING ACCESS TOKEN
         }
     );
 
-    const result =
-    await response.json();
+    const result = await response.json();
+
+    console.log("Zoho Token Response:", result);
 
     if (!result.access_token) {
 
-        lastZohoAuthFailure =
-        Date.now();
-
-        console.log(result);
-
-        const errorMessage =
+        throw new Error(
             result.error_description ||
             result.error ||
-            result.message ||
-            JSON.stringify(result);
-
-        throw new Error(
-            `Zoho auth failed: ${errorMessage}`
+            "Failed to generate token"
         );
 
     }
 
-    const expiresIn =
-    Number(result.expires_in || 3600);
-
-    cachedAccessToken =
-    result.access_token;
+    cachedAccessToken = result.access_token;
 
     accessTokenExpiry =
-    Date.now() + (expiresIn * 1000);
-
-    console.log(`
-=====================================
-ACCESS TOKEN GENERATED
-=====================================
-`);
+    Date.now() +
+    ((result.expires_in || 3600) * 1000);
 
     return cachedAccessToken;
 
@@ -197,60 +141,33 @@ async function getAccessToken() {
 
     if (
         cachedAccessToken &&
-        accessTokenExpiry >
-        now + 30_000
+        accessTokenExpiry > now + 30000
     ) {
-
         return cachedAccessToken;
-
     }
 
     if (accessTokenPromise) {
-
         return accessTokenPromise;
-
     }
 
     accessTokenPromise =
     createZohoAccessToken()
-        .catch(err => {
-
-            accessTokenPromise = null;
-
-            throw err;
-
-        })
         .then(token => {
 
             accessTokenPromise = null;
 
             return token;
 
+        })
+        .catch(error => {
+
+            accessTokenPromise = null;
+
+            throw error;
+
         });
 
     return accessTokenPromise;
-
-}
-
-/* =====================================
-   REQUEST QUEUE
-===================================== */
-
-function queueZohoRequest(fn) {
-
-    const queued =
-    zohoRequestQueue
-        .then(() => fn())
-        .catch(err => {
-
-            return Promise.reject(err);
-
-        });
-
-    zohoRequestQueue =
-    queued.catch(() => {});
-
-    return queued;
 
 }
 
@@ -261,203 +178,46 @@ function queueZohoRequest(fn) {
 async function fetchZohoModulePage(
     moduleName,
     accessToken,
-    page,
-    attempt = 1
+    page
 ) {
-
-    const MAX_ATTEMPTS = 3;
 
     const url =
     `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
 
-    try {
+    console.log("Fetching:", url);
 
-        const response =
-        await fetch(url, {
+    const response = await fetch(
+        url,
+        {
+            method: "GET",
 
             headers: {
                 Authorization:
                 `Zoho-oauthtoken ${accessToken}`
             }
-
-        });
-
-        const rawBody =
-        await response.text();
-
-        /*
-        RETRY FOR SERVER ERROR
-        */
-
-        if (
-            !response.ok &&
-            [429, 500, 502, 503, 504]
-            .includes(response.status) &&
-            attempt < MAX_ATTEMPTS
-        ) {
-
-            const waitMs =
-            500 * attempt;
-
-            console.log(`
-=====================================
-RETRYING API REQUEST
-=====================================
-Module : ${moduleName}
-Page   : ${page}
-Status : ${response.status}
-Retry  : ${attempt}
-=====================================
-`);
-
-            await sleep(waitMs);
-
-            return fetchZohoModulePage(
-                moduleName,
-                accessToken,
-                page,
-                attempt + 1
-            );
-
         }
+    );
 
-        return {
-            response,
-            rawBody
-        };
+    const result = await response.json();
 
-    } catch (error) {
+    if (!response.ok) {
 
-        const errorCode =
-            error.code ||
-            (
-                error.cause &&
-                error.cause.code
-            );
+        console.log(result);
 
-        const retryable =
-            errorCode &&
-            [
-                "ECONNRESET",
-                "ETIMEDOUT",
-                "EAI_AGAIN",
-                "ECONNREFUSED"
-            ].includes(errorCode);
-
-        if (
-            retryable &&
-            attempt < MAX_ATTEMPTS
-        ) {
-
-            const waitMs =
-            500 * attempt;
-
-            console.log(`
-=====================================
-NETWORK RETRY
-=====================================
-Module : ${moduleName}
-Page   : ${page}
-Code   : ${errorCode}
-Retry  : ${attempt}
-=====================================
-`);
-
-            await sleep(waitMs);
-
-            return fetchZohoModulePage(
-                moduleName,
-                accessToken,
-                page,
-                attempt + 1
-            );
-
-        }
-
-        throw error;
-
-    }
-
-}
-
-/* =====================================
-   CACHE WRAPPER
-===================================== */
-
-async function getZohoModuleData(
-    moduleName,
-    accessToken
-) {
-
-    const cacheEntry =
-    zohoModuleCache[moduleName];
-
-    /*
-    CACHE HIT
-    */
-
-    if (
-        cacheEntry &&
-        cacheEntry.expiresAt > Date.now()
-    ) {
-
-        console.log(`
-=====================================
-CACHE HIT
-=====================================
-Module : ${moduleName}
-=====================================
-`);
-
-        return cacheEntry.data;
-
-    }
-
-    /*
-    PREVENT DUPLICATE FETCH
-    */
-
-    if (
-        pendingModuleFetches[moduleName]
-    ) {
-
-        return pendingModuleFetches[moduleName];
-
-    }
-
-    pendingModuleFetches[moduleName] =
-    queueZohoRequest(async () => {
-
-        const data =
-        await fetchZohoModuleData(
-            moduleName,
-            accessToken
+        throw new Error(
+            result.message ||
+            result.code ||
+            "Zoho API Error"
         );
 
-        zohoModuleCache[moduleName] = {
+    }
 
-            data,
-
-            expiresAt:
-            Date.now() +
-            MODULE_CACHE_TTL_MS
-
-        };
-
-        return data;
-
-    }).finally(() => {
-
-        delete pendingModuleFetches[moduleName];
-
-    });
-
-    return pendingModuleFetches[moduleName];
+    return result;
 
 }
 
 /* =====================================
-   FETCH ALL RECORDS
+   FETCH COMPLETE MODULE
 ===================================== */
 
 async function fetchZohoModuleData(
@@ -465,190 +225,89 @@ async function fetchZohoModuleData(
     accessToken
 ) {
 
-    let allData = [];
+    const cache = zohoModuleCache[moduleName];
 
-    let page = 1;
+    if (
+        cache &&
+        cache.expiry > Date.now()
+    ) {
 
-    let hasMore = true;
-
-    while (hasMore) {
-
-        const url =
-        `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
-
-        console.log(`
-=====================================
-FETCHING MODULE
-=====================================
-Module : ${moduleName}
-Page   : ${page}
-=====================================
-`);
-
-        const {
-            response,
-            rawBody
-        } = await fetchZohoModulePage(
-            moduleName,
-            accessToken,
-            page
+        console.log(
+            `${moduleName} loaded from cache`
         );
 
-        /*
-        EMPTY RESPONSE
-        */
+        return cache.data;
 
-        if (
-            !rawBody ||
-            !rawBody.trim()
-        ) {
+    }
 
-            console.log(`
-=====================================
-EMPTY RESPONSE
-=====================================
-Module : ${moduleName}
-Page   : ${page}
-=====================================
-`);
+    let allData = [];
 
-            break;
+    // 13K Candidate Support
+    const MAX_PAGES = 70;
 
-        }
-
-        let result;
-
-        /*
-        PARSE JSON
-        */
+    for (let page = 1; page <= MAX_PAGES; page++) {
 
         try {
 
-            result =
-            JSON.parse(rawBody);
-
-        } catch (parseError) {
-
-            console.log(`
-=====================================
-INVALID JSON
-=====================================
-${rawBody.slice(0, 300)}
-=====================================
-`);
-
-            throw new Error(
-                "Zoho invalid JSON response"
+            const result =
+            await fetchZohoModulePage(
+                moduleName,
+                accessToken,
+                page
             );
 
-        }
+            const records =
+            result.data || [];
 
-        /*
-        API ERROR
-        */
-
-        if (!response.ok) {
-
-            const errorMessage =
-                result.error_description ||
-                result.error ||
-                result.message ||
-                response.status;
-
-            console.log(`
-=====================================
-ZOHO API ERROR
-=====================================
-Module : ${moduleName}
-Page   : ${page}
-Error  : ${errorMessage}
-=====================================
-`);
-
-            throw new Error(
-                `Zoho API call failed: ${errorMessage}`
+            console.log(
+                `${moduleName} Page ${page}: ${records.length}`
             );
 
-        }
+            allData = [
+                ...allData,
+                ...records
+            ];
 
-        /*
-        NO DATA
-        */
+            if (records.length < 200) {
+                break;
+            }
 
-        if (
-            !result.data ||
-            result.data.length === 0
-        ) {
+            await sleep(200);
 
-            console.log(`
-=====================================
-NO MORE RECORDS
-=====================================
-Module : ${moduleName}
-=====================================
-`);
+        } catch (error) {
+
+            console.log(
+                `Error Page ${page}:`,
+                error.message
+            );
 
             break;
 
         }
 
-        /*
-        ADD DATA
-        */
-
-        allData.push(...result.data);
-
-        console.log(`
-=====================================
-PAGE FETCHED
-=====================================
-Module : ${moduleName}
-Page   : ${page}
-Page Records : ${result.data.length}
-Total Records: ${allData.length}
-=====================================
-`);
-
-        /*
-        MORE RECORDS
-        */
-
-        if (
-            result.info &&
-            result.info.more_records === true
-        ) {
-
-            page++;
-
-        } else {
-
-            hasMore = false;
-
-            console.log(`
-=====================================
-FETCH COMPLETED
-=====================================
-Module : ${moduleName}
-Final Count : ${allData.length}
-=====================================
-`);
-
-        }
-
-        /*
-        RATE LIMIT PROTECTION
-        */
-
-        await sleep(300);
-
     }
+
+    zohoModuleCache[moduleName] = {
+
+        data: allData,
+
+        expiry:
+        Date.now() +
+        MODULE_CACHE_TTL_MS
+
+    };
+
+    console.log(
+        `${moduleName} Total Records:`,
+        allData.length
+    );
 
     return allData;
 
 }
 
 /* =====================================
-   DASHBOARD API
+   DASHBOARD DATA
 ===================================== */
 
 app.get(
@@ -675,7 +334,7 @@ app.get(
             for (const moduleName of modules) {
 
                 data[moduleName] =
-                await getZohoModuleData(
+                await fetchZohoModuleData(
                     moduleName,
                     accessToken
                 );
@@ -740,19 +399,11 @@ app.get(
             const moduleName =
             req.params.moduleName;
 
-            console.log(`
-=====================================
-MODULE REQUEST
-=====================================
-${moduleName}
-=====================================
-`);
-
             const accessToken =
             await getAccessToken();
 
-            const allData =
-            await getZohoModuleData(
+            const data =
+            await fetchZohoModuleData(
                 moduleName,
                 accessToken
             );
@@ -761,14 +412,10 @@ ${moduleName}
 
                 success: true,
 
-                module:
-                moduleName,
-
                 count:
-                allData.length,
+                data.length,
 
-                data:
-                allData
+                data
 
             });
 
@@ -791,33 +438,43 @@ ${moduleName}
 );
 
 /* =====================================
-   EXPORT FOR VERCEL
+   HEALTH CHECK
 ===================================== */
 
-module.exports = app;
+app.get("/health", (req, res) => {
+
+    res.json({
+
+        success: true,
+
+        message:
+        "Server Running Successfully"
+
+    });
+
+});
 
 /* =====================================
    LOCAL SERVER
 ===================================== */
 
-if (require.main === module) {
+if (process.env.NODE_ENV !== "production") {
 
     const PORT =
     process.env.PORT || 3000;
 
     app.listen(PORT, () => {
 
-        console.log(`
-=====================================
-SERVER RUNNING
-=====================================
-
-URL:
-http://localhost:${PORT}
-
-=====================================
-`);
+        console.log(
+            `Server Running On Port ${PORT}`
+        );
 
     });
 
 }
+
+/* =====================================
+   EXPORT FOR VERCEL
+===================================== */
+
+module.exports = app;
