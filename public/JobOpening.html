@@ -303,30 +303,26 @@ async function initDashboardPipeline() {
         document.getElementById('reportTableBody').innerHTML = `
             <tr><td colspan="6" class="state-msg">Loading Zoho data... 0%</td></tr>`;
 
-        const results = await Promise.all(modules.map(async moduleName => {
-            const response = await fetch(`${API_ROOT_ENDPOINT}/module/${moduleName}`);
-            const json = await response.json();
-            completedCount += 1;
-            const percent = Math.min(100, Math.round((completedCount / modules.length) * 100));
-            updateZohoLoadingStatus(completedCount, modules.length);
-            document.getElementById('reportTableBody').innerHTML = `
-                <tr><td colspan="6" class="state-msg">Loading Zoho data... ${percent}%</td></tr>`;
-            if (!response.ok) {
-                throw new Error(`Server error fetching ${moduleName}: ${response.status} ${response.statusText}`);
-            }
-            if (!json.success) {
-                throw new Error(`Zoho module ${moduleName} failed: ${json.error || json.message || JSON.stringify(json)}`);
-            }
-            return json;
-        }));
+        const response = await fetch(`${API_ROOT_ENDPOINT}/dashboard-data`);
+        const json = await response.json();
 
-        const [jobsRes, interviewsRes, callsRes, offersRes] = results;
+        if (!response.ok) {
+            throw new Error(`Server error fetching dashboard data: ${response.status} ${response.statusText}`);
+        }
+        if (!json.success) {
+            throw new Error(`Dashboard fetch failed: ${json.error || json.message || JSON.stringify(json)}`);
+        }
 
-        moduleStorage.JobOpenings = jobsRes.data || [];
-        moduleStorage.Interviews = interviewsRes.data || [];
-        moduleStorage.Calls = callsRes.data || [];
-        moduleStorage.Offers = offersRes.data || [];
+        moduleStorage.JobOpenings = json.data.JobOpenings || [];
+        moduleStorage.Interviews = json.data.Interviews || [];
+        moduleStorage.Calls = json.data.Calls || [];
+        moduleStorage.Offers = json.data.Offers || [];
         cachedJobsList = moduleStorage.JobOpenings;
+
+        completedCount = modules.length;
+        updateZohoLoadingStatus(completedCount, modules.length);
+        document.getElementById('reportTableBody').innerHTML = `
+            <tr><td colspan="6" class="state-msg">Loading Zoho data... 100%</td></tr>`;
 
         buildRecruiterListFromData();
         applyUIRefresh();

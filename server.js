@@ -54,6 +54,10 @@ let zohoRequestQueue = Promise.resolve();
 let lastZohoAuthFailure = 0;
 const ZOHO_AUTH_COOLDOWN_MS = 60_000;
 
+let zohoModuleCache = {};
+let pendingModuleFetches = {};
+const MODULE_CACHE_TTL_MS = 2 * 60_000;
+
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -127,6 +131,62 @@ function queueZohoRequest(fn) {
     return queued;
 }
 
+async function fetchZohoModulePage(moduleName, accessToken, page, attempt = 1) {
+    const MAX_ATTEMPTS = 3;
+    const url = `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
+    try {
+        const response = await fetch(url, {
+            headers: {
+                Authorization: `Zoho-oauthtoken ${accessToken}`
+            }
+        });
+        const rawBody = await response.text();
+
+        if (!response.ok && [429, 500, 502, 503, 504].includes(response.status) && attempt < MAX_ATTEMPTS) {
+            const waitMs = 500 * attempt;
+            console.log(`Zoho retry ${attempt} for ${url} after status ${response.status}`);
+            await sleep(waitMs);
+            return fetchZohoModulePage(moduleName, accessToken, page, attempt + 1);
+        }
+
+        return { response, rawBody };
+    } catch (error) {
+        const errorCode = error.code || (error.cause && error.cause.code);
+        const retryable = errorCode && ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED'].includes(errorCode);
+        if (retryable && attempt < MAX_ATTEMPTS) {
+            const waitMs = 500 * attempt;
+            console.log(`Zoho network retry ${attempt} for ${url}: ${errorCode}`);
+            await sleep(waitMs);
+            return fetchZohoModulePage(moduleName, accessToken, page, attempt + 1);
+        }
+        throw error;
+    }
+}
+
+async function getZohoModuleData(moduleName, accessToken) {
+    const cacheEntry = zohoModuleCache[moduleName];
+    if (cacheEntry && cacheEntry.expiresAt > Date.now()) {
+        return cacheEntry.data;
+    }
+
+    if (pendingModuleFetches[moduleName]) {
+        return pendingModuleFetches[moduleName];
+    }
+
+    pendingModuleFetches[moduleName] = queueZohoRequest(async () => {
+        const data = await fetchZohoModuleData(moduleName, accessToken);
+        zohoModuleCache[moduleName] = {
+            data,
+            expiresAt: Date.now() + MODULE_CACHE_TTL_MS
+        };
+        return data;
+    }).finally(() => {
+        delete pendingModuleFetches[moduleName];
+    });
+
+    return pendingModuleFetches[moduleName];
+}
+
 async function fetchZohoModuleData(moduleName, accessToken) {
     let allData = [];
 
@@ -134,13 +194,7 @@ async function fetchZohoModuleData(moduleName, accessToken) {
         const url = `https://recruit.zoho.in/recruit/v2/${moduleName}?page=${page}&per_page=200`;
         console.log("Fetching:", url);
 
-        const response = await fetch(url, {
-            headers: {
-                Authorization: `Zoho-oauthtoken ${accessToken}`
-            }
-        });
-
-        const rawBody = await response.text();
+        const { response, rawBody } = await fetchZohoModulePage(moduleName, accessToken, page);
 
         if (!rawBody || !rawBody.trim()) {
             console.log(`Page ${page}: empty response, stopping fetch loop.`);
@@ -184,7 +238,7 @@ app.get("/dashboard-data", async (req, res) => {
         const data = {};
 
         for (const moduleName of modules) {
-            data[moduleName] = await fetchZohoModuleData(moduleName, accessToken);
+            data[moduleName] = await getZohoModuleData(moduleName, accessToken);
         }
 
         res.json({
@@ -213,10 +267,8 @@ app.get("/dashboard-data", async (req, res) => {
 app.get("/module/:moduleName", async (req, res) => {
     try {
         const moduleName = req.params.moduleName;
-        const allData = await queueZohoRequest(async () => {
-            const accessToken = await getAccessToken();
-            return fetchZohoModuleData(moduleName, accessToken);
-        });
+        const accessToken = await getAccessToken();
+        const allData = await getZohoModuleData(moduleName, accessToken);
 
         res.json({
             success: true,
