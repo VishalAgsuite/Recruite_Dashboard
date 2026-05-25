@@ -341,7 +341,7 @@ async function fetchZohoModuleData(
 ===================================== */
 
 app.get(
-    "/dashboard-data",
+    ["/dashboard-data", "/api/dashboard-data"],
     async (req, res) => {
 
         try {
@@ -421,7 +421,7 @@ app.get(
 ===================================== */
 
 app.get(
-    "/module/:moduleName",
+    ["/module/:moduleName", "/api/module/:moduleName"],
     async (req, res) => {
 
         try {
