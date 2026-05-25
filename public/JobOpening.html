@@ -248,7 +248,8 @@
 
 <script>
     window.openCandidatePage = function() {
-        window.location.href = "/Candidate.html";
+        const base = (typeof API_ROOT_ENDPOINT !== 'undefined' && API_ROOT_ENDPOINT) ? API_ROOT_ENDPOINT : window.location.origin;
+        window.location.href = base + "/Candidate.html";
     }
 let runtimeCachedReport = [];
 let cachedJobsList = []; 
